@@ -1,4 +1,5 @@
-data/*.pkl
-data/*.csv
+*.pkl
+*.csv
+*.pyc
 __pycache__/
-*.log
+data/satellite_positions.pkl
