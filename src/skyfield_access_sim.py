@@ -9,10 +9,10 @@ USER_LAT = 40.0386
 USER_LON = -75.5966
 START_TIME_UTC = datetime(2025, 4, 21, 0, 0, 0, tzinfo=utc)
 
-# ✅ 總測試時間 = 96 分鐘，每 slot = 15 秒
-TOTAL_MINUTES = 96
+# ✅ 總測試時間 = 25 分鐘，每 slot = 15 秒
+TOTAL_MINUTES = 25
 SLOT_INTERVAL_SEC = 15
-SLOTS = TOTAL_MINUTES * 60 // SLOT_INTERVAL_SEC  # 384
+SLOTS = TOTAL_MINUTES * 60 // SLOT_INTERVAL_SEC  # 100
 
 OUTPUT_CSV = "data/access_matrix.csv"
 OUTPUT_PKL = "data/satellite_positions.pkl"

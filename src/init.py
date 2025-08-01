@@ -8,7 +8,7 @@ def load_system_data():
 
     # === 讀取 Access Matrix ===
     df_access = pd.read_csv("data/access_matrix.csv")
-    df_access["visible_sats"] = df_access["visible_sats"].apply(eval)  # 轉成 list
+    df_access["visible_sats"] = df_access["visible_sats"].apply(eval)
 
     # === 讀取衛星座標 ===
     with open("data/satellite_positions.pkl", "rb") as f:
@@ -22,9 +22,12 @@ def load_system_data():
     with open("data/system_params.json", "r") as f:
         params = json.load(f)
 
-    # 將 EIRP 與 G_rx 轉換為線性值
+    # ✅ 在這裡統一轉換 (不要在 greedy.py 再轉一次)
     params["eirp_linear"] = 10 ** (params["eirp_dbw"] / 10)
     params["grx_linear"] = 10 ** (params["grx_dbi"] / 10)
+    params["noise_watt"] = (
+        params["boltzmann"] * params["noise_temperature_k"] * params["channel_bandwidth_hz"]
+    )
 
     system = {
         "users": df_users,
