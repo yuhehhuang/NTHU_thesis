@@ -9,10 +9,10 @@ USER_LAT = 40.0386
 USER_LON = -75.5966
 START_TIME_UTC = datetime(2025, 4, 21, 0, 0, 0, tzinfo=utc)
 
-# ✅ 總測試時間 = 25 分鐘，每 slot = 15 秒
-TOTAL_MINUTES = 25
+# ✅ 總測試時間 = 10 分鐘，每 slot = 15 秒
+TOTAL_MINUTES = 10
 SLOT_INTERVAL_SEC = 15
-SLOTS = TOTAL_MINUTES * 60 // SLOT_INTERVAL_SEC  # 100
+SLOTS = TOTAL_MINUTES * 60 // SLOT_INTERVAL_SEC  # 40
 
 OUTPUT_CSV = "data/access_matrix.csv"
 OUTPUT_PKL = "data/satellite_positions.pkl"
@@ -36,12 +36,12 @@ satellite_positions = {}
 for t_idx, t in enumerate(times):
     visible_sats = []
     for sat in satellites:
-        difference = sat - observer
+        difference = sat - observer #得到位置向量
         topocentric = difference.at(t)
         alt, az, dist = topocentric.altaz()
 
-        # ✅ Elevation 門檻 45 度
-        if alt.degrees >= 45:
+        # ✅ Elevation 門檻 60 度
+        if alt.degrees >= 60:
             visible_sats.append(sat.name)
 
         # 儲存每個 (sat.name, t_idx) 的位置 (x,y,z) km

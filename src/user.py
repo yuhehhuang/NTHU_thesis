@@ -3,8 +3,8 @@ import random
 from geopy.distance import distance
 from geopy.point import Point
 
-T = 25 * 60 // 15  # 100 個 slot
-NUM_USERS = 200
+T = 10 * 60 // 15  # 10 min (40 slots)
+NUM_USERS = 100
 NUM_GROUPS = 20
 USERS_PER_GROUP = NUM_USERS // NUM_GROUPS
 CENTER_LAT = 40.0386
@@ -13,15 +13,20 @@ CENTER_LON = -75.5966
 center = Point(CENTER_LAT, CENTER_LON)
 users = []
 
+# 產生所有可能的開始時間
+possible_starts = list(range(0, max(0, T - 12) + 1))
+
+# 隨機抽取不重複的開始時間
+group_starts = random.sample(possible_starts, NUM_GROUPS)
+
 for group_id in range(NUM_GROUPS):
-    # 這個 group 共用一個開始時間
-    group_t_start = random.randint(0, max(0, T - 20))  # 預留至少 20 slot
+    group_t_start = group_starts[group_id]  # ✅ 取對應的開始時間
 
     for i in range(USERS_PER_GROUP):
         user_id = group_id * USERS_PER_GROUP + i
 
-        # 每個 user 自己決定服務時長 10~20 slot
-        duration = random.randint(10, 20)
+        # 每個 user 自己決定服務時長 10~12 slot
+        duration = random.randint(10, 12)
         t_end = min(group_t_start + duration, T - 1)  # 確保不超過 T
 
         # 隨機位置（半徑 0.8 km）

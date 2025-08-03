@@ -9,9 +9,6 @@ from src.utils import (
 )
 
 ####################################################################################################
-from collections import Counter
-import pandas as pd
-from src.utils import compute_sinr_and_rate, compute_score, update_m_s_t_from_channels, check_visibility
 
 def run_greedy_path_for_user(
     user_id: int,
@@ -23,8 +20,6 @@ def run_greedy_path_for_user(
     sat_channel_dict: dict,
     params: dict
 ):
-    num_channels = params["num_channels"]
-
     current_sat, current_ch = None, None
     last_ho_time = t_start
     is_first_handover = True
@@ -56,7 +51,6 @@ def run_greedy_path_for_user(
     if best_sat is None:
         return [], 0, False, []
 
-    # ✅ 紀錄第一次選擇結果
     current_sat, current_ch = best_sat, best_ch
     path.append((current_sat, current_ch, t_start))
     data_rate_records.append((user_id, t_start, current_sat, current_ch, best_data_rate))
@@ -67,32 +61,24 @@ def run_greedy_path_for_user(
     # ==========================
     t = t_start + 1
     while t <= t_end:
-        # 計算當前衛星的 score
-        _, data_rate_curr = compute_sinr_and_rate(params, path_loss, current_sat, t, sat_channel_dict, current_ch)
-        if data_rate_curr is None:
-            current_score = -1
-        else:
-            m_s_t = update_m_s_t_from_channels(sat_channel_dict, sat_channel_dict.keys())
-            current_score = compute_score(params, m_s_t, data_rate_curr, current_sat)
+        # 判斷是否可以換手
+        can_handover = is_first_handover or (t - last_ho_time >= W)
 
-        best_sat, best_ch, best_score, best_data_rate = current_sat, current_ch, current_score, data_rate_curr
+        best_sat, best_ch, best_score, best_data_rate = current_sat, current_ch, -1, 0
 
-        # ==========================
-        # 需要換手時重新找衛星
-        # ==========================
-        if is_first_handover or (t - last_ho_time >= W) or (current_score <= 0):
+        if can_handover:
             for sat in access_matrix[t]["visible_sats"]:
-                if sat == current_sat:
-                    continue
-
-                # 檢查未來 W slot 是否可見
-                future_visible = check_visibility(pd.DataFrame(access_matrix), sat, t, min(t_end, t + W - 1))
-                if not future_visible:
-                    continue
-
                 for ch in sat_channel_dict[sat]:
                     if sat_channel_dict[sat][ch] == 1:
                         continue
+
+                    # 檢查未來 W 個 slot 是否都可見
+                    future_visible = check_visibility(
+                        pd.DataFrame(access_matrix), sat, t, min(t_end, t + W - 1)
+                    )
+                    if not future_visible:
+                        continue
+
                     SINR, data_rate = compute_sinr_and_rate(params, path_loss, sat, t, sat_channel_dict, ch)
                     if data_rate is None:
                         continue
@@ -105,29 +91,28 @@ def run_greedy_path_for_user(
                         best_ch = ch
                         best_data_rate = data_rate
 
-        # ==========================
-        # 如果換了衛星，更新 handover 時間
-        # ==========================
-        if best_sat != current_sat or best_ch != current_ch:
-            current_sat, current_ch = best_sat, best_ch
-            last_ho_time = t
-            is_first_handover = False
+            # 如果找到新的衛星，更新 handover 時間
+            if best_sat != current_sat or best_ch != current_ch:
+                current_sat, current_ch = best_sat, best_ch
+                last_ho_time = t
+                is_first_handover = False
 
         # ==========================
-        # 固定使用這個衛星與 channel W 個 slot
+        # 一次加入接下來 W 個 slot
         # ==========================
         for w in range(W):
             if t + w > t_end:
                 break
+
+            # 這裡不再檢查可見性，因為換手時已經確保未來 W slot 可見
             path.append((current_sat, current_ch, t + w))
             _, dr = compute_sinr_and_rate(params, path_loss, current_sat, t + w, sat_channel_dict, current_ch)
             data_rate_records.append((user_id, t + w, current_sat, current_ch, dr if dr else 0))
             total_reward += best_score
 
-        t += W
+        t += W  # 跳到下一個 handover 時間
 
     return path, total_reward, True, data_rate_records
-
 
 ##################################################################################
 def run_greedy_per_W(
@@ -139,7 +124,7 @@ def run_greedy_per_W(
     W: int = 4
 ):
     sat_load_dict = {sat: chs.copy() for sat, chs in sat_load_dict_backup.items()}
-
+    user_df = user_df.sort_values(by="t_start").reset_index(drop=True) #確保user依照開始時間排序，誰先開始request 就開始幫他找路徑
     active_user_paths = []
     all_user_paths = []
     results = []
@@ -157,14 +142,9 @@ def run_greedy_per_W(
             if old_user["t_end"] < t_start:
                 path = old_user.get("path")
                 if path:
-                    usage_count = Counter((s, c) for s, c, _ in path)
-                    for (sat, ch), count in usage_count.items():
-                        sat_load_dict[sat][ch] = max(0, sat_load_dict[sat][ch] - count)
-
-                    for s, c, t in path:
-                        if t in load_by_time and s in load_by_time[t]:
-                            load_by_time[t][s] = max(0, load_by_time[t][s] - 1)
-
+                    unique_sat_ch = set((s, c) for s, c, _ in path)
+                    for sat, ch in unique_sat_ch:
+                        sat_load_dict[sat][ch] = max(0, sat_load_dict[sat][ch] - 1)
                 to_delete.append(old_user)
         for u in to_delete:
             active_user_paths.remove(u)
@@ -178,14 +158,17 @@ def run_greedy_per_W(
             access_matrix=access_matrix,
             path_loss=path_loss,
             sat_channel_dict=sat_load_dict,
-            params=params       # ✅ 這裡使用傳進來的 params
+            params=params       
         )
 
-        # 更新負載
+        # 更新負載 
         if path:
-            usage_count = Counter((s, c) for s, c, _ in path)
-            for (sat, ch), count in usage_count.items():
-                sat_load_dict[sat][ch] += count
+            # 只對 unique (sat, c) 更新一次負載
+            unique_sat_ch = set((s, c) for s, c, _ in path)
+            for sat, ch in unique_sat_ch:
+                sat_load_dict[sat][ch] += 1
+
+            # 但 load_by_time 還是要逐 time slot 累加
             for s, c, t in path:
                 load_by_time[t][s] = load_by_time[t].get(s, 0) + 1
 
