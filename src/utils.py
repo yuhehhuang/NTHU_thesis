@@ -56,6 +56,11 @@ def recompute_all_data_rates(all_user_paths, path_loss, params, sat_channel_dict
     for entry in all_user_paths:
         user_id = entry["user_id"]
         path = entry["path"]
+        if isinstance(path, str):
+            try:
+                path = eval(path)
+            except:
+                continue  # 如果 eval 出錯就跳過       
         for sat, ch, t in path:
             assignments_by_time[t].append((user_id, sat, ch))
 
