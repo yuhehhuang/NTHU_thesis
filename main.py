@@ -5,9 +5,10 @@ from src.init import load_system_data
 from src.greedy import run_greedy_per_W
 from src.hungarian import run_hungarian_per_W
 from src.utils import recompute_all_data_rates
-
+from src.dp import run_dp_per_W
+from src.dp_opti import run_batch_optimal_dp_per_W 
 # === 方法選擇 ===
-METHOD = "hungarian"  # 可選 "greedy" 或 "hungarian"
+METHOD = "dp_opti"  # 可選 "greedy" 或 "hungarian" # 或 "dp"
 
 # === 1️⃣ 載入系統資料 ===
 system = load_system_data(regenerate_sat_channels=False)
@@ -43,12 +44,35 @@ elif METHOD == "hungarian":
         W=W
     )
     df_data_rates = results_df.copy()
+elif METHOD == "dp":
+    results_df, all_user_paths, load_by_time, df_data_rates = run_dp_per_W(
+        user_df=df_users,
+        access_matrix=df_access.to_dict(orient="records"),
+        path_loss=path_loss,
+        sat_load_dict_backup=copy.deepcopy(sat_channel_dict_backup),
+        params=params,
+        W=W
+    )
+elif METHOD == "dp_opti":
+    results_df, all_user_paths, load_by_time, df_data_rates = run_batch_optimal_dp_per_W(
+        user_df=df_users,
+        access_matrix=df_access.to_dict(orient="records"),
+        path_loss=path_loss,
+        sat_load_dict_backup=copy.deepcopy(sat_channel_dict_backup),
+        params=params,
+        W=W
+    )    
 else:
     raise ValueError(f"未知的 METHOD: {METHOD}")
 
 # === 3️⃣ 重新計算正確的 data rate（考慮所有干擾）===
+if isinstance(all_user_paths, pd.DataFrame):
+    user_path_records = all_user_paths.to_dict(orient="records")
+else:
+    user_path_records = all_user_paths
+
 df_correct_rates = recompute_all_data_rates(
-    all_user_paths.to_dict(orient="records"), path_loss, params, sat_channel_dict_backup
+    user_path_records, path_loss, params, sat_channel_dict_backup
 )
 
 # 與原本 data rate 對齊排序
