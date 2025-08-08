@@ -6,9 +6,12 @@ from src.greedy import run_greedy_per_W
 from src.hungarian import run_hungarian_per_W
 from src.utils import recompute_all_data_rates
 from src.dp import run_dp_per_W
-from src.dp_opti import run_batch_optimal_dp_per_W 
+from src.dp_opti import run_batch_optimal_dp_per_W
+from src.ga import GeneticAlgorithm  
+from src.mslb import run_mslb_batch
+
 # === 方法選擇 ===
-METHOD = "dp_opti"  # 可選 "greedy" 或 "hungarian" # 或 "dp"
+METHOD = "mslb"  # 可選 "greedy" 或 "hungarian" # 或 "dp"
 
 # === 1️⃣ 載入系統資料 ===
 system = load_system_data(regenerate_sat_channels=False)
@@ -61,7 +64,28 @@ elif METHOD == "dp_opti":
         sat_load_dict_backup=copy.deepcopy(sat_channel_dict_backup),
         params=params,
         W=W
-    )    
+    )
+elif METHOD == "ga":
+    ga = GeneticAlgorithm(
+        population_size=10,
+        user_df=df_users,
+        access_matrix=df_access.to_dict(orient="records"),
+        W=W,
+        path_loss=path_loss,
+        sat_channel_dict=copy.deepcopy(sat_channel_dict_backup),
+        params=params
+    )
+    ga.evolve(generations=5)  # 訓練 5 輪，可調整為 20、50 等等
+    results_df, all_user_paths, load_by_time, df_data_rates = ga.export_best_result()
+elif METHOD == "mslb":
+    results_df, all_user_paths, load_by_time, df_data_rates = run_mslb_batch(
+        user_df=df_users,
+        access_matrix=df_access.to_dict(orient="records"),
+        path_loss=path_loss,
+        sat_channel_dict=copy.deepcopy(sat_channel_dict_backup),
+        params=params,
+        W=W
+    )
 else:
     raise ValueError(f"未知的 METHOD: {METHOD}")
 

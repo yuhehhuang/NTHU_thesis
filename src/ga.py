@@ -3,7 +3,7 @@ import copy
 import pandas as pd
 from collections import defaultdict
 from src.utils import compute_sinr_and_rate, compute_score, update_m_s_t_from_channels, check_visibility
-
+from src.dp import run_dp_path_for_user
 class Individual:
     """
     一個個體（染色體），表示所有使用者的 path 分配方案。
@@ -31,8 +31,7 @@ class Individual:
         self.reward = 0
 
         tmp_sat_dict = copy.deepcopy(self.sat_channel_dict)  # 複製 channel 使用狀態
-        total_reward = 0
-        all_data_rates = []
+        total_reward = 0  # 全部使用者的總 reward
 
         # 遍歷每個使用者
         for _, user in self.user_df.iterrows():
@@ -45,6 +44,7 @@ class Individual:
             is_first = True  # 是否為第一次分配
             user_path = []  # 該 user 的 path
             data_rate_records = []  # 該 user 的 data rate 記錄
+            user_reward = 0  # 該 user 累積 reward
 
             # 開始依照 time slot 分配 path
             while t <= t_end:
@@ -99,19 +99,22 @@ class Individual:
                         break
                     user_path.append((current_sat, current_ch, t + w))
                     data_rate_records.append((user_id, t + w, current_sat, current_ch, best_data_rate))
+                    user_reward += best_score  # 每個 slot 累積 reward
+
                 t += self.W
 
             # 如果 user 有合法路徑，就記錄下來
             if user_path:
                 self.position[user_id] = user_path
-                for s, c, _ in set((s, c) for s, c, _ in user_path):
+                for s, c in set((s, c) for s, c, _ in user_path):  # ✅ 修正 unpack 錯誤
                     tmp_sat_dict[s][c] += 1  # 更新負載
                 self.data_rates.extend(data_rate_records)
-                total_reward += best_score * len(user_path)
+                total_reward += user_reward  # ✅ 改用累積 reward
             else:
                 self.position[user_id] = []  # 無路徑則設為空
 
         self.reward = total_reward  # 記錄總 reward
+
 
 # 其餘 GA 相關邏輯略，建議類似補註解
 
@@ -163,63 +166,18 @@ class GeneticAlgorithm:
                 user_id = int(user.user_id)
                 t_start = int(user.t_start)
                 t_end = int(user.t_end)
-                # 改成使用 Individual 內部的 fast path 方法來取代 DP
-                t = t_start
-                current_sat, current_ch = None, None
-                last_ho_time = t_start
-                is_first = True
-                user_path = []
 
-                while t <= t_end:
-                    can_handover = is_first or (t - last_ho_time >= individual.W)
-                    best_score, best_sat, best_ch, best_data_rate = -1e9, None, None, 0
+                # 直接用 DP 重新計算該 user 的最佳路徑
+                path, reward, success, data_rate_records = run_dp_path_for_user(
+                    user_id, t_start, t_end, individual.W,
+                    individual.access_matrix, individual.path_loss,
+                    copy.deepcopy(individual.sat_channel_dict),  # 用快照避免污染其他 user
+                    individual.params
+                )
 
-                    if current_sat is not None and current_ch is not None:
-                        m_s_t = update_m_s_t_from_channels(individual.sat_channel_dict, individual.sat_channel_dict.keys())
-                        SINR, data_rate = compute_sinr_and_rate(individual.params, individual.path_loss, current_sat, t, individual.sat_channel_dict, current_ch)
-                        if data_rate is not None:
-                            score = compute_score(individual.params, m_s_t, data_rate, current_sat)
-                            if score > best_score:
-                                best_score = score
-                                best_sat = current_sat
-                                best_ch = current_ch
-                                best_data_rate = data_rate
-
-                    if can_handover:
-                        for sat in individual.access_matrix[t]["visible_sats"]:
-                            for ch in individual.sat_channel_dict[sat]:
-                                if individual.sat_channel_dict[sat][ch] == 1:
-                                    continue
-                                if not check_visibility(pd.DataFrame(individual.access_matrix), sat, t, min(t_end, t + individual.W - 1)):
-                                    continue
-                                SINR, data_rate = compute_sinr_and_rate(individual.params, individual.path_loss, sat, t, individual.sat_channel_dict, ch)
-                                if data_rate is None:
-                                    continue
-                                m_s_t = update_m_s_t_from_channels(individual.sat_channel_dict, individual.sat_channel_dict.keys())
-                                score = compute_score(individual.params, m_s_t, data_rate, sat)
-                                if score > best_score:
-                                    best_score = score
-                                    best_sat = sat
-                                    best_ch = ch
-                                    best_data_rate = data_rate
-
-                    if best_sat is None:
-                        break
-
-                    if (best_sat != current_sat or best_ch != current_ch):
-                        last_ho_time = t
-                        is_first = False
-                    current_sat, current_ch = best_sat, best_ch
-
-                    for w in range(individual.W):
-                        if t + w > t_end:
-                            break
-                        user_path.append((current_sat, current_ch, t + w))
-                    t += individual.W
-
-                # 若成功產生路徑則更新
-                if user_path:
-                    individual.position[user_id] = user_path
+                # 若成功產生路徑則更新個體
+                if success:
+                    individual.position[user_id] = path
     def export_best_result(self):
         # 將最佳個體的結果轉換為與主程式一致的格式（用於儲存與分析）
         best = self.best_individual

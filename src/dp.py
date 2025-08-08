@@ -47,6 +47,7 @@ def run_dp_path_for_user(
         m_s_t = update_m_s_t_from_channels(sat_channel_dict, sat_channel_dict.keys())
         score = compute_score(params, m_s_t, dr, sat)
         dp[0][p_idx][W] = score
+        #回朔時候用來偵測parent是否=-1
         parent[0][p_idx][W] = (-1, -1, -1)
         data_rate_cache[(0, p_idx)] = dr
 
@@ -62,7 +63,7 @@ def run_dp_path_for_user(
             m_s_t = update_m_s_t_from_channels(sat_channel_dict, sat_channel_dict.keys())
             score = compute_score(params, m_s_t, dr, sat)
             data_rate_cache[(t_rel, p_idx)] = dr
-
+            ###能進入以下邏輯表示這個pair是可用的
             # 1. 換手 (c=0)
             best_val = NEG_INF
             best_parent = None
@@ -83,8 +84,10 @@ def run_dp_path_for_user(
                 parent[t_rel][p_idx][1] = (p_idx, t_rel-1, 0)
             for c in range(2, W+1):
                 candidates = []
+                # 1️⃣ 從上一個 slot 的 c-1 狀態延續過來
                 if dp[t_rel-1][p_idx][c-1] != NEG_INF:
                     candidates.append((dp[t_rel-1][p_idx][c-1], (p_idx, t_rel-1, c-1)))
+                # 2️⃣ 或是直接從上一個 slot 的 c 狀態延續過來
                 if dp[t_rel-1][p_idx][c] != NEG_INF:
                     candidates.append((dp[t_rel-1][p_idx][c], (p_idx, t_rel-1, c)))
                 if candidates:
@@ -92,7 +95,7 @@ def run_dp_path_for_user(
                     dp[t_rel][p_idx][c] = best_val2 + score
                     parent[t_rel][p_idx][c] = best_parent2
 
-    # 找最大值
+    # 找最大值 找dp[t_end][(s,c)][c]的最大值
     max_reward = NEG_INF
     end_state = None
     for p_idx in range(P):
@@ -108,6 +111,7 @@ def run_dp_path_for_user(
     path = []
     data_rate_records = []
     cur = end_state
+    #cur = (p_idx, t_rel, c)
     while cur and cur[0] != -1:
         p_idx, t_rel, c = cur
         sat, ch = all_pairs[p_idx]
@@ -115,6 +119,7 @@ def run_dp_path_for_user(
         dr = data_rate_cache.get((t_rel, p_idx), 0)
         path.append((sat, ch, t_abs))
         data_rate_records.append((user_id, t_abs, sat, ch, dr))
+        # 回溯到上一個狀態
         cur = parent[t_rel][p_idx][c]
 
     path.reverse()
