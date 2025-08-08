@@ -11,7 +11,7 @@ from src.ga import GeneticAlgorithm
 from src.mslb import run_mslb_batch
 
 # === 方法選擇 ===
-METHOD = "mslb"  # 可選 "greedy" 或 "hungarian" # 或 "dp"
+METHOD = "ga"  # 可選 "greedy" 或 "hungarian" # 或 "dp"
 
 # === 1️⃣ 載入系統資料 ===
 system = load_system_data(regenerate_sat_channels=False)
@@ -73,7 +73,8 @@ elif METHOD == "ga":
         W=W,
         path_loss=path_loss,
         sat_channel_dict=copy.deepcopy(sat_channel_dict_backup),
-        params=params
+        params=params,
+        seed=123456  # ✅ 固定一個整數 seed；不想固定就拿掉這行
     )
     ga.evolve(generations=5)  # 訓練 5 輪，可調整為 20、50 等等
     results_df, all_user_paths, load_by_time, df_data_rates = ga.export_best_result()

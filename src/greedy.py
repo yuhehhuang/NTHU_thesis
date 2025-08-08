@@ -1,4 +1,5 @@
 import json
+import copy
 from collections import defaultdict, Counter
 import pandas as pd
 from src.utils import (
@@ -10,109 +11,161 @@ from src.utils import (
 
 ####################################################################################################
 
-def run_greedy_path_for_user(
-    user_id: int,
-    t_start: int,
-    t_end: int,
-    W: int,
-    access_matrix: list,
-    path_loss: dict,
-    sat_channel_dict: dict,
-    params: dict
-):
-    current_sat, current_ch = None, None
-    last_ho_time = t_start
-    is_first_handover = True
-    path = []
-    total_reward = 0
-    data_rate_records = []
+class Individual:
+    """
+    一個個體（染色體），表示所有使用者的 path 分配方案。
+    包含分配路徑與 reward。
+    """
+    def __init__(self, user_df, access_matrix, W, path_loss, sat_channel_dict, params):
+        # 初始化使用者資料與系統參數
+        self.user_df = user_df
+        self.access_matrix = access_matrix                  # list[dict] 或等價
+        self.df_access = pd.DataFrame(access_matrix)        # 給 check_visibility 用，只建立一次
+        self.W = W
+        self.path_loss = path_loss
+        self.sat_channel_dict = sat_channel_dict
+        self.params = params
 
-    # ==========================
-    # 1️⃣ 第一次選擇衛星與 channel
-    # ==========================
-    best_sat, best_ch, best_score, best_data_rate = None, None, -1, 0
+        self.position = {}   # {user_id: [(sat, ch, t), ...]}
+        self.data_rates = [] # [(user_id, t, sat, ch, data_rate), ...]
+        self.reward = 0      # 全部使用者的總 reward
 
-    for sat in access_matrix[t_start]["visible_sats"]:
-        for ch in sat_channel_dict[sat]:
-            if sat_channel_dict[sat][ch] == 1:
+        self.generate_fast_path()
+
+    def generate_fast_path(self):
+        # 重置結果
+        self.position = {}
+        self.data_rates = []
+        self.reward = 0
+
+        tmp_sat_dict = copy.deepcopy(self.sat_channel_dict)  # 以佔用計數表示
+        total_reward = 0
+
+        # === 逐一處理每個使用者 ===
+        for _, user in self.user_df.iterrows():
+            user_id = int(user["user_id"])
+            t_start = int(user["t_start"])
+            t_end = int(user["t_end"])
+
+            t = t_start
+            current_sat, current_ch = None, None
+            last_ho_time = t_start
+            is_first_handover = True
+
+            user_path = []
+            data_rate_records = []
+            user_reward = 0
+
+            # ==========================================================
+            # 1) t_begin（第一次選擇）：依 greedy.py 的做法先選一個 (sat,ch)
+            #    不強制要求未來 W-slot 都可視；只選當下最好的
+            # ==========================================================
+            best_sat, best_ch, best_score, best_data_rate = None, None, float("-inf"), 0
+
+            if t_start in range(t_start, t_end + 1):
+                visible = self.access_matrix[t_start]["visible_sats"]
+                for sat in visible:
+                    for ch in tmp_sat_dict[sat]:
+                        if tmp_sat_dict[sat][ch] > 0:
+                            continue  # 已被佔用
+                        SINR, dr = compute_sinr_and_rate(self.params, self.path_loss, sat, t_start, tmp_sat_dict, ch)
+                        if dr is None or dr <= 0:
+                            continue
+                        m_s_t = update_m_s_t_from_channels(tmp_sat_dict, tmp_sat_dict.keys())
+                        score = compute_score(self.params, m_s_t, dr, sat)
+                        if score > best_score:
+                            best_score = score
+                            best_sat, best_ch = sat, ch
+                            best_data_rate = dr
+
+            # 若起始就找不到連線，這個 user 無路徑
+            if best_sat is None:
+                self.position[user_id] = []
                 continue
-            SINR, data_rate = compute_sinr_and_rate(params, path_loss, sat, t_start, sat_channel_dict, ch)
-            if data_rate is None:
-                continue
-            m_s_t = update_m_s_t_from_channels(sat_channel_dict, sat_channel_dict.keys())
-            score = compute_score(params, m_s_t, data_rate, sat)
 
-            if score > best_score:
-                best_score = score
-                best_sat = sat
-                best_ch = ch
-                best_data_rate = data_rate
+            # 固定第一次的 (sat,ch)，但只放入 t_start 這一格
+            current_sat, current_ch = best_sat, best_ch
+            user_path.append((current_sat, current_ch, t_start))
+            data_rate_records.append((user_id, t_start, current_sat, current_ch, best_data_rate))
+            # t_start 這格計分（只在 dr>0 時）
+            if best_data_rate > 0:
+                m_s_t0 = update_m_s_t_from_channels(tmp_sat_dict, tmp_sat_dict.keys())
+                user_reward += compute_score(self.params, m_s_t0, best_data_rate, current_sat)
 
-    if best_sat is None:
-        return [], 0, False, []
+            # ==========================================================
+            # 2) 從下一個 slot 開始：可換手時才檢查未來 W-slot 可視並批次前進 W；
+            #    否則不換手，每次只前進 1 slot（只需確保當下可視）
+            # ==========================================================
+            t = t_start + 1
+            while t <= t_end:
+                can_handover = is_first_handover or (t - last_ho_time >= self.W)
+                did_handover = False
 
-    current_sat, current_ch = best_sat, best_ch
-    path.append((current_sat, current_ch, t_start))
-    data_rate_records.append((user_id, t_start, current_sat, current_ch, best_data_rate))
-    total_reward += best_score
+                # 預設保持原 (sat,ch)
+                best_sat, best_ch, best_score = current_sat, current_ch, float("-inf")
 
-    # ==========================
-    # 2️⃣ 從下一個 slot 開始
-    # ==========================
-    t = t_start + 1
-    while t <= t_end:
-        # 判斷是否可以換手
-        can_handover = is_first_handover or (t - last_ho_time >= W)
+                if can_handover:
+                    vsats = self.access_matrix[t]["visible_sats"]
+                    for sat in vsats:
+                        for ch in tmp_sat_dict[sat]:
+                            if tmp_sat_dict[sat][ch] > 0:
+                                continue
+                            # 換手才檢查未來 W-slot 可視
+                            if not check_visibility(self.df_access, sat, t, min(t_end, t + self.W - 1)):
+                                continue
+                            _, dr0 = compute_sinr_and_rate(self.params, self.path_loss, sat, t, tmp_sat_dict, ch)
+                            if dr0 is None or dr0 <= 0:
+                                continue
+                            m_s_t = update_m_s_t_from_channels(tmp_sat_dict, tmp_sat_dict.keys())
+                            score0 = compute_score(self.params, m_s_t, dr0, sat)
+                            if score0 > best_score:
+                                best_score = score0
+                                best_sat, best_ch = sat, ch
 
-        best_sat, best_ch, best_score, best_data_rate = current_sat, current_ch, -1, 0
+                    # 如果挑到更好的 (sat,ch)，就換手
+                    if (best_sat is not None) and (best_sat != current_sat or best_ch != current_ch):
+                        current_sat, current_ch = best_sat, best_ch
+                        last_ho_time = t
+                        is_first_handover = False
+                        did_handover = True
 
-        if can_handover:
-            for sat in access_matrix[t]["visible_sats"]:
-                for ch in sat_channel_dict[sat]:
-                    if sat_channel_dict[sat][ch] == 1:
-                        continue
+                # 步長決定：有換手→批次 W；沒換手→只前進 1
+                step = self.W if did_handover else 1
 
-                    # 檢查未來 W 個 slot 是否都可見
-                    future_visible = check_visibility(
-                        pd.DataFrame(access_matrix), sat, t, min(t_end, t + W - 1)
-                    )
-                    if not future_visible:
-                        continue
+                for w in range(step):
+                    tt = t + w
+                    if tt > t_end:
+                        break
 
-                    SINR, data_rate = compute_sinr_and_rate(params, path_loss, sat, t, sat_channel_dict, ch)
-                    if data_rate is None:
-                        continue
-                    m_s_t = update_m_s_t_from_channels(sat_channel_dict, sat_channel_dict.keys())
-                    score = compute_score(params, m_s_t, data_rate, sat)
+                    # 不換手時，只需確認這一格可視（換手已保證整段 W 可視）
+                    if not did_handover:
+                        if current_sat not in self.access_matrix[tt]["visible_sats"]:
+                            break
 
-                    if score > best_score:
-                        best_score = score
-                        best_sat = sat
-                        best_ch = ch
-                        best_data_rate = data_rate
+                    # 逐格計算（避免把第一格的結果複製整段）
+                    _, dr = compute_sinr_and_rate(self.params, self.path_loss, current_sat, tt, tmp_sat_dict, current_ch)
 
-            # 如果找到新的衛星，更新 handover 時間
-            if best_sat != current_sat or best_ch != current_ch:
-                current_sat, current_ch = best_sat, best_ch
-                last_ho_time = t
-                is_first_handover = False
+                    user_path.append((current_sat, current_ch, tt))
+                    data_rate_records.append((user_id, tt, current_sat, current_ch, dr if dr else 0))
 
-        # ==========================
-        # 一次加入接下來 W 個 slot
-        # ==========================
-        for w in range(W):
-            if t + w > t_end:
-                break
+                    if dr and dr > 0:
+                        m_s_t = update_m_s_t_from_channels(tmp_sat_dict, tmp_sat_dict.keys())
+                        user_reward += compute_score(self.params, m_s_t, dr, current_sat)
 
-            # 這裡不再檢查可見性，因為換手時已經確保未來 W slot 可見
-            path.append((current_sat, current_ch, t + w))
-            _, dr = compute_sinr_and_rate(params, path_loss, current_sat, t + w, sat_channel_dict, current_ch)
-            data_rate_records.append((user_id, t + w, current_sat, current_ch, dr if dr else 0))
-            total_reward += best_score
+                t += step  # 下一輪
 
-        t += W  # 跳到下一個 handover 時間
+            # === 收尾：寫回個人結果 & 佔用計數 ===
+            if user_path:
+                self.position[user_id] = user_path
+                # 將本 user 使用過的 (sat,ch) 標成佔用（一次即可）
+                for s, c in set((s, c) for s, c, _ in user_path):
+                    tmp_sat_dict[s][c] += 1
+                self.data_rates.extend(data_rate_records)
+                total_reward += user_reward
+            else:
+                self.position[user_id] = []
 
-    return path, total_reward, True, data_rate_records
+        self.reward = total_reward
 
 ##################################################################################
 def run_greedy_per_W(
