@@ -9,6 +9,7 @@ class Individual:
     def __init__(self, user_df, access_matrix, W, path_loss, sat_channel_dict, params, seed=None):
         self.user_df = user_df
         self.access_matrix = access_matrix
+        self.df_access = pd.DataFrame(access_matrix)
         self.W = W
         self.path_loss = path_loss
         self.sat_channel_dict = sat_channel_dict
