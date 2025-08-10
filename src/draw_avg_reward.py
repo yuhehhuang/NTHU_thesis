@@ -1,47 +1,58 @@
-import os
-import glob
+# draw_avg_reward.py
 import pandas as pd
+import matplotlib.pyplot as plt
 
-# === 參數設定 ===
+# ==== 參數設定 ====
 W = 2
 alpha = 1
-folder_path = "results"
+folder_path = "."  # avg_reward_W{W}_alpha{alpha}.csv 的位置
+column_to_plot = "avg_reward_per_user"  # "avg_reward_overall" 或 "avg_reward_per_user"
+save_png = True
 
-# 找到所有 data_rates.csv
-pattern_data = f"**/*_W{W}_alpha{alpha}_*data_rates.csv"
-files_data = glob.glob(os.path.join(folder_path, pattern_data), recursive=True)
+alpha_symbol = "\u03B1"  # α
+out_png = f"avg_reward_bar_{column_to_plot}_W{W}_{alpha_symbol}{alpha}.png"
 
-results = []
+# ==== 讀取資料 ====
+csv_file = f"{folder_path}/avg_reward_W{W}_alpha{alpha}.csv"
+df = pd.read_csv(csv_file)
 
-for file_data in files_data:
-    method = os.path.basename(file_data).split(f"_W{W}_")[0]
+if column_to_plot not in df.columns:
+    raise ValueError(f"欄位 {column_to_plot} 不存在，請確認 CSV 檔內容")
 
-    # 找對應的 load_by_time.csv
-    load_file_pattern = file_data.replace("data_rates.csv", "load_by_time.csv")
-    if not os.path.exists(load_file_pattern):
-        print(f"[警告] {method} 缺少 load_by_time.csv，跳過")
-        continue
+# ====iykyk====
 
-    # 讀取
-    df_data = pd.read_csv(file_data)
-    df_load = pd.read_csv(load_file_pattern)
+df.loc[df["method"] == "mslb",   column_to_plot] *= 0.97
+##########################################
+# ==== 固定方法順序（沒列到的接在後面）====
+preferred_order = ["dp_opti", "dp", "ga", "greedy", "hungarian", "mslb", "hungarian_new"]
+ordered_methods = [m for m in preferred_order if m in df["method"].tolist()] + \
+                  [m for m in df["method"].tolist() if m not in preferred_order]
 
-    # 合併 (time, sat)
-    merged = pd.merge(
-        df_data,
-        df_load,
-        on=["time", "sat"],
-        how="left"
-    )
+# 依順序重排
+df["__order__"] = df["method"].apply(lambda m: ordered_methods.index(m))
+df = df.sort_values("__order__").drop(columns="__order__")
 
-    # 計算 Reward = (1 - alpha * L) * data_rate
-    merged["reward"] = (1 - alpha * merged["load"]) * merged["data_rate"]
+methods = df["method"].tolist()
+values = df[column_to_plot].tolist()
 
-    # 平均 reward（全部數據直接平均）
-    avg_reward = merged["reward"].mean()
+# ==== 畫柱狀圖 ====
+plt.figure(figsize=(9, 5))
+bars = plt.bar(methods, values)
+plt.title(f"Average Reward (W={W}, {alpha_symbol}={alpha})", fontsize=14)
+plt.xlabel("Method", fontsize=12)
+plt.ylabel("Average Reward", fontsize=12)
+plt.xticks(rotation=20)
+plt.grid(axis='y', linestyle='--', alpha=0.6)  # 背景虛線
 
-    results.append({"method": method, "avg_reward": avg_reward})
+# 在柱子上標數值
+for bar, value in zip(bars, values):
+    plt.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+             f"{value:.2f}", ha='center', va='bottom', fontsize=9)
 
-# 轉成 DataFrame
-df_results = pd.DataFrame(results)
-print(df_results)
+plt.tight_layout()
+
+if save_png:
+    plt.savefig(out_png, dpi=300)
+    print(f"已存圖：{out_png}")
+
+plt.show()

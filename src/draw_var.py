@@ -8,9 +8,10 @@ W = 2
 alpha = 1
 folder_path = "results"  # 結果資料夾
 save_png = True
-out_png = f"avg_load_variance_W{W}_alpha{alpha}.png"
+alpha_symbol = "\u03B1"  # α
+out_png = f"avg_load_variance_W{W}_{alpha_symbol}{alpha}.png"
 
-# ==== 遞迴找檔案 ====
+# ==== 檔案搜尋 ====
 pattern = f"**/*_W{W}_alpha{alpha}_*load_by_time.csv"
 files = glob.glob(os.path.join(folder_path, pattern), recursive=True)
 
@@ -23,7 +24,6 @@ for f in files:
 
 # ==== 計算每個方法的平均 variance ====
 method_variances = {}
-
 for file in files:
     base = os.path.basename(file)
     method_name = base.split(f"_W{W}")[0]  # 取 _W 之前的字串
@@ -37,17 +37,25 @@ for file in files:
     avg_var = var_per_t.mean()
     method_variances[method_name] = avg_var
 
-# ==== 畫折線圖 ====
-methods = list(method_variances.keys())
+# ==== 固定方法順序 ====
+preferred_order = ["dp_opti", "dp", "ga", "greedy", "hungarian", "mslb", "hungarian_new"]
+methods = [m for m in preferred_order if m in method_variances] + \
+          [m for m in method_variances if m not in preferred_order]
 avg_vars = [method_variances[m] for m in methods]
 
+# ==== 畫折線圖 ====
 plt.figure(figsize=(9, 5))
 plt.plot(methods, avg_vars, marker='o', linestyle='-')
-plt.title(f"Average Load Variance (W={W}, alpha={alpha})", fontsize=14)
+plt.title(f"Average Load Variance (W={W}, {alpha_symbol}={alpha})", fontsize=14)
 plt.xlabel("Method", fontsize=12)
 plt.ylabel("Average Load Variance", fontsize=12)
-plt.grid(True, linestyle='--', alpha=0.5)
+plt.grid(axis='y', linestyle='--', alpha=0.5)
 plt.xticks(rotation=20)
+
+# 在點上顯示數值
+for x, y in zip(methods, avg_vars):
+    plt.text(x, y, f"{y:.2f}", ha='center', va='bottom', fontsize=9)
+
 plt.tight_layout()
 
 if save_png:

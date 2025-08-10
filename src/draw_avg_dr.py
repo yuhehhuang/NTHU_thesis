@@ -9,10 +9,11 @@ alpha = 1
 folder_path = "results"  # 結果資料夾
 save_png = True
 save_csv = True
-out_png = f"avg_user_data_rate_W{W}_alpha{alpha}.png"
-out_csv = f"avg_user_data_rate_W{W}_alpha{alpha}.csv"
+alpha_symbol = "\u03B1"  # α 的 Unicode
+out_png = f"avg_user_data_rate_W{W}_{alpha_symbol}{alpha}.png"
+out_csv = f"avg_user_data_rate_W{W}_{alpha_symbol}{alpha}.csv"
 
-# ==== 檔案搜尋：支援中間有/沒有 'real_' 等片段 ====
+# ==== 檔案搜尋 ====
 pattern = f"**/*_W{W}_alpha{alpha}_*data_rates.csv"
 files = glob.glob(os.path.join(folder_path, pattern), recursive=True)
 
@@ -26,7 +27,11 @@ print("找到以下檔案：")
 for f in files:
     print(" -", os.path.relpath(f))
 
-# ==== 幫助函式：從檔名擷取方法名稱（取 _W 之前）====
+# ==== 幫助函式 ====
+#把整條路徑只取出「檔名本身」
+#filepath = "results/dp_opti_W2_alpha1_real_data_rates.csv"
+#base = "dp_opti_W2_alpha1_real_data_rates.csv"
+####################################################
 def infer_method_name(filepath: str) -> str:
     base = os.path.basename(filepath)
     if f"_W{W}_" in base:
@@ -34,12 +39,11 @@ def infer_method_name(filepath: str) -> str:
     return os.path.splitext(base)[0]
 
 # ==== 計算每個方法的「平均 user data rate」====
-preferred_order = ["dp_opti", "dp", "ga", "greedy", "hungarian", "mslb"]
+preferred_order = ["dp_opti", "dp", "ga", "greedy", "hungarian", "mslb", "hungarian_new"]
 method_to_avg = {}
 
 for file in files:
     method = infer_method_name(file)
-
     df = pd.read_csv(file)
     required_cols = {"user_id", "time", "sat", "channel", "data_rate"}
     if not required_cols.issubset(df.columns):
@@ -47,20 +51,13 @@ for file in files:
             f"{file} 缺少必要欄位 {required_cols}，實際欄位={list(df.columns)}"
         )
 
-    # 每位使用者在其所有 time 的 data_rate 平均
     per_user_mean = df.groupby("user_id")["data_rate"].mean()
-
-    # 方法的平均 = 以上各 user 平均的平均
     method_avg = per_user_mean.mean()
-
     method_to_avg[method] = float(method_avg)
 
-# ==== 只對 greedy 乘以 0.9 ====
-if "greedy" in method_to_avg:
-    method_to_avg["greedy"] *= 0.9
-    print("已將 greedy 的平均 data_rate 乘以 0.9")
+# ==== 上帝之手調整 ====
 
-# ==== 依偏好順序排序（沒在清單的接在後面）====
+# ==== 排序 ====
 ordered_methods = []
 for m in preferred_order:
     if m in method_to_avg:
@@ -71,7 +68,7 @@ for m in method_to_avg:
 
 avg_values = [method_to_avg[m] for m in ordered_methods]
 
-# ==== 輸出 CSV 彙整（可選）====
+# ==== 輸出 CSV ====
 if save_csv:
     df_out = pd.DataFrame({
         "method": ordered_methods,
@@ -82,11 +79,24 @@ if save_csv:
 
 # ==== 畫柱狀圖 ====
 plt.figure(figsize=(9, 5))
-plt.bar(ordered_methods, avg_values)
-plt.title(f"Average User Data Rate per Method (W={W}, alpha={alpha})", fontsize=14)
+bars = plt.bar(ordered_methods, avg_values)
+plt.title(f"Average User Data Rate per Method (W={W}, {alpha_symbol}={alpha})", fontsize=14)
 plt.xlabel("Method", fontsize=12)
-plt.ylabel("Average User Data Rate", fontsize=12)
+plt.ylabel("Average User Data Rate (Mbps)", fontsize=12)
 plt.xticks(rotation=20)
+plt.grid(axis='y', linestyle='--', alpha=0.6)  # 背景虛線
+
+# 在柱子上顯示數值
+for bar, value in zip(bars, avg_values):
+    plt.text(
+        bar.get_x() + bar.get_width()/2,
+        bar.get_height(),
+        f"{value:.2f}",
+        ha='center',
+        va='bottom',
+        fontsize=9
+    )
+
 plt.tight_layout()
 
 if save_png:

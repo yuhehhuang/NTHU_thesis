@@ -2,16 +2,16 @@ import os
 import copy
 import pandas as pd
 from src.init import load_system_data
-from src.greedy import run_greedy_per_W
+from src.greedy import run_greedy_per_W, run_greedy_path_for_user
 from src.hungarian import run_hungarian_per_W
 from src.utils import recompute_all_data_rates
 from src.dp import run_dp_per_W
 from src.dp_opti import run_batch_optimal_dp_per_W
 from src.ga import GeneticAlgorithm  
 from src.mslb import run_mslb_batch
-
+from src.hungarian_new import run_hungarian_new_per_W
 # === 方法選擇 ===
-METHOD = "ga"  # 可選 "greedy" 或 "hungarian" # 或 "dp"
+METHOD = "greedy"  # 可選:dp ,dp_opti ,ga ,mslb,hungarian
 
 # === 1️⃣ 載入系統資料 ===
 system = load_system_data(regenerate_sat_channels=False)
@@ -23,7 +23,7 @@ sat_channel_dict_backup = system["sat_channel_dict_backup"]
 sat_positions = system["sat_positions"]
 
 # 設定 W 與 alpha
-W = 2
+W = 3
 alpha = params["alpha"]
 
 # === 2️⃣ 執行對應的方法 ===
@@ -38,6 +38,17 @@ if METHOD == "greedy":
     )
 elif METHOD == "hungarian":
     results_df, all_user_paths, load_by_time = run_hungarian_per_W(
+        df_users=df_users,
+        df_access=df_access,
+        path_loss=path_loss,
+        sat_channel_dict_backup=copy.deepcopy(sat_channel_dict_backup),
+        sat_positions=sat_positions,
+        params=params,
+        W=W
+    )
+    df_data_rates = results_df.copy()
+elif METHOD == "hungarian_new":
+    results_df, all_user_paths, load_by_time = run_hungarian_new_per_W(
         df_users=df_users,
         df_access=df_access,
         path_loss=path_loss,
@@ -76,7 +87,7 @@ elif METHOD == "ga":
         params=params,
         seed=123456  # ✅ 固定一個整數 seed；不想固定就拿掉這行
     )
-    ga.evolve(generations=5)  # 訓練 5 輪，可調整為 20、50 等等
+    ga.evolve(generations=5)  # 訓練 5 輪(5輪大概要1小時)，可調整為 20、50 等等
     results_df, all_user_paths, load_by_time, df_data_rates = ga.export_best_result()
 elif METHOD == "mslb":
     results_df, all_user_paths, load_by_time, df_data_rates = run_mslb_batch(
